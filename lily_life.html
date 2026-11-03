@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>The Life of a Lily</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #05071a; overflow: hidden; }
+  body { box-sizing: border-box; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  canvas { display: block; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// ===== 1) ตั้งค่าพื้นฐาน =====
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+let W, H, U, cx, by, STEM, bgGrad;      // U = หน่วยความยาวหลัก (ขนาดทุกอย่างอิงจากค่านี้)
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const r = cv.getBoundingClientRect();
+  W = r.width; H = r.height;
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  U = Math.min(W, H * 0.62);
+  cx = W / 2;                            // กึ่งกลางจอ
+  by = H * 0.86;                         // ตำแหน่งโคนต้น
+  STEM = U * 0.8;                        // ความสูงก้าน
+  bgGrad = ctx.createLinearGradient(0, 0, 0, H);
+  bgGrad.addColorStop(0, '#04061a');
+  bgGrad.addColorStop(0.6, '#0b1243');
+  bgGrad.addColorStop(1, '#1d1050');
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ===== 2) ฟังก์ชันช่วย =====
+const R = Math.random;
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const ease = (v) => v * v * (3 - 2 * v);              // ทำให้การเปลี่ยนค่านุ่มขึ้น
+const lerp = (a, b, t) => a + (b - a) * t;
+const tri = () => R() + R() - 1;                       // สุ่มเลข -1..1 ที่กระจุกอยู่ใกล้กลาง
+const mix = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+const css = (c) => 'rgb(' + (c[0] | 0) + ',' + (c[1] | 0) + ',' + (c[2] | 0) + ')';
+const dot = (x, y, s) => ctx.fillRect(x, y, s, s);     // วาดจุดเล็ก ๆ 1 จุด
+
+// ===== 3) สร้างอนุภาค (ทำครั้งเดียวตอนเริ่ม) =====
+// ก้าน: s = ตำแหน่งบนก้าน (0 โคน, 1 ปลาย), o = ระยะห่างจากเส้นกลาง
+const stem = Array.from({ length: 1300 }, () => {
+  const z = R();
+  return { s: R(), o: tri(), sz: 1 + R() * 1.2, c: css(mix([70, 210, 150], [175, 255, 215], z)) };
+});
+
+// ใบ: s = จุดที่ใบงอกจากก้าน, d = ซ้าย/ขวา, L = ความยาว, a = มุมเงยขึ้น
+const LEAVES = [
+  { s: 0.10, d: 1, L: 0.30, a: 0.42 }, { s: 0.18, d: -1, L: 0.32, a: 0.38 },
+  { s: 0.36, d: 1, L: 0.25, a: 0.50 }, { s: 0.41, d: -1, L: 0.26, a: 0.50 }
+];
+LEAVES.forEach((lf) => {
+  lf.p = Array.from({ length: 700 }, () => {
+    const l = R();
+    return { l, v: tri(), sz: 1 + R() * 1.2, c: css(mix([90, 225, 150], [205, 255, 150], l * l * (0.6 + 0.4 * R()))) };
+  });
+});
+
+// กลีบ: o = มุมตอนบานเต็ม, c = มุมตอนตูม (หน่วยเรเดียน วัดจากแนวตั้งขึ้นบน), grp 0 = กลีบหลังสีเข้ม, 1 = กลีบหน้าสีอ่อน
+const PET = [-105, -38, -5, 30, 65, 108].map((deg, i) => ({
+  o: deg * Math.PI / 180, c: (i - 2.5) * 0.035, L: 0.30 + R() * 0.04,
+  grp: i > 0 && i < 4 ? 0 : 1, k: (0.7 + R() * 0.5) * (deg < 0 ? -1 : 1),   // k = ความโค้งของปลายกลีบ
+  p: Array.from({ length: 1000 }, () => { const l = R(); return { l, v: tri(), sz: 1 + R() * 1.1, lb: Math.min(14, (l * 15) | 0) }; })
+}));
+
+// ตารางสีกลีบ: PAL[กลุ่ม][ระดับการบาน 0-10][ตำแหน่งตามความยาวกลีบ 0-14]
+function petCol(g, bb, l) {
+  const bl = bb / 10;
+  const bud = mix([255, 70, 170], [255, 244, 190], clamp((l - 0.35) / 0.5));       // ตูม: โคนชมพู ปลายครีม
+  const open = g === 0 ? mix([190, 60, 215], [236, 176, 255], l) : mix([255, 100, 190], [255, 232, 246], l);
+  let c = mix(bud, open, bl);
+  if (g === 1 && l > 0.25 && l < 0.6) c = mix(c, [255, 238, 170], 0.35 * bl);       // ปื้นสีครีมกลางกลีบหน้า
+  return css(c);
+}
+const PAL = [0, 1].map((g) => Array.from({ length: 11 }, (_, bb) => Array.from({ length: 15 }, (_, lb) => petCol(g, bb, (lb + 0.5) / 15))));
+
+// พื้นหลัง: ดิน ดาว
+const ground = Array.from({ length: 900 }, () => ({ x: R(), f: Math.pow(R(), 1.8), up: R() * R() * 0.025, sz: 1 + R() * 1.5, c: css(mix([110, 80, 230], [210, 180, 255], R())) }));
+const stars = Array.from({ length: 160 }, () => ({ x: R(), y: R(), r: 0.6 + R() * 1.1, p: R() * 6 }));
+
+// ===== 4) ตำแหน่งก้าน (โค้งเล็กน้อย + แกว่งตามลม) =====
+function stemPt(s, sw) {
+  return { x: cx + Math.sin(s * 2.4) * 0.035 * U + sw * s * s * 0.02 * U, y: by - s * STEM };
+}
+
+// ===== 5) ฟังก์ชันวาดแต่ละส่วน =====
+function drawBackground(T) {
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#fff';
+  for (const s of stars) {                                // ดาวระยิบระยับ
+    ctx.globalAlpha = 0.15 + 0.5 * Math.abs(Math.sin(T * 1.2 + s.p));
+    dot(s.x * W, s.y * H, s.r);
+  }
+  ctx.save();                                             // วงกลมเส้นประ ค่อย ๆ ปรากฏ
+  ctx.globalAlpha = ease(clamp((T - 2) / 3));
+  ctx.lineWidth = 1.6;
+  ctx.setLineDash([1.5, 7]);
+  ctx.lineDashOffset = -T * 3;
+  ctx.strokeStyle = 'rgba(205,215,255,0.4)';
+  [[0.02, 0.40, 0.42], [-0.30, 0.62, 0.22], [0.28, 0.66, 0.27], [-0.36, 0.30, 0.18]].forEach(([dx, dy, r]) => {
+    ctx.beginPath();
+    ctx.arc(cx + dx * W, H * dy, r * W, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+  ctx.restore();
+  ctx.globalAlpha = clamp(T / 1.2);                       // ดินม่วงที่โคนต้น
+  for (const p of ground) {
+    ctx.fillStyle = p.c;
+    dot(p.x * W, by + p.f * (H - by) * 0.9 - p.up * U, p.sz);
+  }
+}
+
+function drawStem(g, sw) {
+  for (const p of stem) {
+    if (p.s > g) continue;                                // ส่วนที่ยังไม่โตถึง ไม่ต้องวาด
+    const pt = stemPt(p.s, sw);
+    ctx.fillStyle = p.c;
+    dot(pt.x + p.o * (0.013 - 0.006 * p.s) * U, pt.y, p.sz);
+  }
+}
+
+function drawLeaf(lf, sw, T) {
+  const start = 5.5 * (1 - Math.sqrt(1 - lf.s));          // เวลาที่ก้านโตถึงจุดนี้
+  const lp = ease(clamp((T - start - 0.2) / 2.4));        // ใบกางออกกี่ %
+  if (lp <= 0) return;
+  const base = stemPt(lf.s, sw), L = lf.L * U * lp, ca = Math.cos(lf.a), sa = Math.sin(lf.a);
+  for (const p of lf.p) {
+    const l = p.l;
+    const ax = lf.d * ca * l * L;                         // ตามแนวใบ
+    const ay = -sa * l * L + 0.21 * l * l * L;            // ปลายใบตกลงเล็กน้อย
+    const w = Math.sin(Math.PI * Math.pow(l, 0.8)) * 0.26 * L * p.v;   // ความกว้างใบ กว้างสุดกลางใบ
+    ctx.fillStyle = p.c;
+    dot(base.x + ax + lf.d * sa * w, base.y + ay + ca * w, p.sz);
+  }
+}
+
+function drawFlower(head, bs, eb, T) {
+  const bb = Math.round(eb * 10);
+  for (const grp of [0, 1]) {                             // วาดกลีบหลังก่อน แล้วค่อยกลีบหน้าทับ
+    for (const pet of PET) {
+      if (pet.grp !== grp) continue;
+      const a0 = lerp(pet.c, pet.o, eb) + Math.sin(T * 1.4 + pet.o * 3) * 0.025 * eb;   // มุมกลีบ (ไหวเบา ๆ)
+      const k = pet.k * eb;
+      const L = pet.L * U * lerp(0.42, 1, eb) * bs;       // ความยาวกลีบ
+      const wm = lerp(0.2, 0.27, eb);                     // ความกว้างกลีบ
+      const pal = PAL[grp][bb];
+      for (const p of pet.p) {
+        const l = p.l, ang = a0 + k * l;
+        let x, y;
+        if (Math.abs(k) < 1e-3) { x = Math.sin(a0) * l * L; y = -Math.cos(a0) * l * L; }
+        else { x = L * (Math.cos(a0) - Math.cos(ang)) / k; y = -L * (Math.sin(ang) - Math.sin(a0)) / k; }
+        const w = Math.pow(l, 0.55) * Math.pow(1 - l, 0.6) * 2.1 * wm * L * p.v;      // รูปทรงกลีบปลายแหลม
+        ctx.fillStyle = pal[p.lb];
+        dot(head.x + x + Math.cos(ang) * w, head.y + y + Math.sin(ang) * w, p.sz);
+      }
+    }
+  }
+  if (eb > 0.45) {                                        // เกสรสีส้ม
+    const se = ease(clamp((eb - 0.45) / 0.55));
+    ctx.globalCompositeOperation = 'lighter';
+    [-0.7, -0.35, -0.05, 0.25, 0.55, 0.8].forEach((a, i) => {
+      const len = (0.16 + 0.04 * (i % 2)) * U * se;
+      const ax = Math.sin(a + Math.sin(T * 1.1 + i) * 0.03), ay = -Math.cos(a);
+      ctx.fillStyle = 'rgba(255,235,190,0.8)';
+      for (let j = 0; j < 18; j++) dot(head.x + ax * len * j / 18, head.y + ay * len * j / 18, 1.2);
+      ctx.fillStyle = 'rgb(255,150,40)';
+      dot(head.x + ax * len - 1.5, head.y + ay * len - 1.5, 3.2);
+    });
+    ctx.globalCompositeOperation = 'source-over';
+  }
+}
+
+// ===== 6) ลูปแอนิเมชัน =====
+const LOOP = 24;                                          // เล่นวนทุก 24 วินาที
+let t0 = performance.now();
+function frame(now) {
+  const T = ((now - t0) / 1000) % LOOP;
+  const fade = T > 22 ? clamp((LOOP - T) / 2) : 1;        // ท้ายรอบจางหาย
+  const sw = Math.sin(T * 0.9);                           // ค่าแกว่งตามลม
+  const g = 1 - Math.pow(1 - clamp(T / 5.5), 2);          // ก้านโตกี่ % (เริ่มเร็ว ช้าลงตอนท้าย)
+  const bs = ease(clamp((T - 3.6) / 3));                  // ตูมโผล่และโตกี่ %
+  const eb = ease(clamp((T - 7) / 5.5));                  // บานกี่ %
+  drawBackground(T);
+  ctx.globalAlpha = fade;
+  drawStem(g, sw);
+  LEAVES.forEach((lf) => drawLeaf(lf, sw, T));
+  if (bs > 0) drawFlower(stemPt(g, sw), bs, eb, T);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+cv.addEventListener('pointerdown', () => { t0 = performance.now(); });   // แตะเพื่อเริ่มใหม่
+</script>
+</body>
+</html>
